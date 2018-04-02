@@ -1,0 +1,264 @@
+#!/usr/bin/php -q
+<?php
+	// Se establece que no hay limite de tiempo para la ejecucion de este archivo
+	set_time_limit(0);
+
+	// Se importa la libreria de manejo del AGI de asterisk mediante lenguaje php
+	require('phpagi.php');
+
+	// Se crea una variable para invocar las funciones del AGI
+	$agi = new AGI();
+
+	// ------ Variables parametro para la conexion a la BD
+	$servidor = 'localhost';
+	$usuario = 'root';
+	$pass = 'yato21224';
+	$DB = 'Hotel';
+	// ---------------------------------------------------
+
+	// Se crea la conexion a la base de datos (en caso de falla se termina)
+	$conexion = mysqli_connect($servidor, $usuario, $pass, $DB);
+	if(mysqli_connect_errno()){
+		$agi->verbose("Fallo la conexion a la base de datos!!!\n" . mysqli_connect_error());
+		exit(0);
+	}
+
+	// Si pasa aqui es porque la conexion fue exitosa, por lo tanto:
+	
+	// Saludamos y preguntamos al usuario si desea consultar las habitaciones, hacer una reserva, cancelar una reserva ya hecha o hablar con la recepcionista
+	$agi->exec("AGI","googletts.agi,\"Bienvenido al GRAN HOTEL!\",es");
+	$agi->exec("AGI","googletts.agi,\"Para consultar una reserva marque 1\",es");
+	$agi->exec("AGI","googletts.agi,\"Para hacer una reserva marque 2\",es");
+	$agi->exec("AGI","googletts.agi,\"Para cancelar una reserva marque 3\",es");
+	$agi->exec("AGI","googletts.agi,\"O para comunicarse con la recepcionista marque 0\",es");
+
+	// Ahora esperamos a que el usuario responda (no hay limite de tiempo)
+	$resultado = $agi->get_data('beep', 15000, 1);
+	$opcionElegida = $resultado['result'];
+
+	// Si el usuario digito cero entonces
+	if($opcionElegida == "0")
+	{
+		// Transferimos la llamada a la extension de la operadora (Digamos la extension 002)
+		$agi->verbose("OPCION CERO");
+		$agi->exec("AGI","googletts.agi,\"Su llamada esta siendo transferida\",es");
+		$agi->exec_dial("SIP", "002");
+		//$agi->hangup();
+	}
+	elseif($opcionElegida == "1") // Si digito uno entonces
+	{
+		$agi->verbose("OPCION UNO");
+
+		// Solicitamos la identificacion del cliente
+		$agi->exec("AGI","googletts.agi,\"Ingrese su número de identificación al terminar oprima numeral\",es");
+		$resultado = $agi->get_data('beep', 30000, 10); // Lo maximo a ingresar son 10 digitos
+		$opcionElegida = $resultado['result'];
+
+		// Buscamos en la BD
+		$resultado = mysqli_query($conexion, "SELECT h.etiqueta, h.tipoPieza, r.fechaEntrada, r.numDias FROM Reserva AS r JOIN Habitacion AS h ON r.habitacion = h.id WHERE r.docHuesped='".$opcionElegida."';");
+
+		// Tratamos de obtener el primer resultado de la consulta
+		$fila = mysqli_fetch_array($resultado);
+
+		// Si se encontro algo entonces
+		if($fila != NULL)
+		{		
+			do
+			{
+				// Interpretamos la fecha de la siguiente forma:
+				$dia = substr($fila['fechaEntrada'], 0, 2);
+				$aux = substr($fila['fechaEntrada'], 3, 4);
+				switch($aux)
+				{
+					case 01:
+					$mes = "Enero";
+					break;
+					case 02:
+					$mes = "Febrero";
+					break;
+					case 03:
+					$mes = "Marzo";
+					break;
+					case 04:
+					$mes = "Abril";
+					break;
+					case 05:
+					$mes = "Mayo";
+					break;
+					case 06:
+					$mes = "Junio";
+					break;
+					case 07:
+					$mes = "Julio";
+					break;
+					case 08:
+					$mes = "Agosto";
+					break;
+					case 09:
+					$mes = "Septiembre";
+					break;
+					case 10:
+					$mes = "Octubre";
+					break;
+					case 11:
+					$mes = "Noviembre";
+					break;
+					case 12:
+					$mes = "Diciembre";
+					break;
+				}
+				$ano = substr($fila['fechaEntrada'], -4);
+
+				// NOTA: Es muy importante eliminar las comas(,) de los Strings que se van a entregar a GoogleTTS
+				//	 De lo contrario, se presentan errores en la transformacion del texto y en el lenguaje.
+				$etiqueta = str_replace(',', '', $fila['etiqueta']);
+
+				// Y dictamos los resultados por el telefono al cliente				
+				$agi->exec("AGI","googletts.agi,\"Usted ha reservado en " . $etiqueta ." \",es");
+				$agi->exec("AGI","googletts.agi,\"que es una habitacion ". $fila['tipoPieza'] ."\",es");
+				$agi->exec("AGI","googletts.agi,\"para el día ". $dia . "del mes de ". $mes ." del ". $ano ."\",es");
+				$agi->exec("AGI","googletts.agi,\"por ". $fila['numDias'] ." días\",es");
+			}while($fila = mysqli_fetch_array($resultado)); // Si hay mas reservas paso a la siguiente
+		}
+		else // Sino, entonces el usuario no tiene reserva
+		{
+			$agi->exec("AGI","googletts.agi,\"El documento ingresado no tiene reservas\",es");
+		}
+	}
+	elseif($opcionElegida == "2") // Si digito dos entonces
+	{
+		$agi->verbose("OPCION DOS");
+
+		// Empiezo a pedirle los datos para hacer la reserva. En primer lugar pido el numero de documento de identidad
+		$agi->exec("AGI","googletts.agi,\"Por favor ingrese su numero de identificacion Al terminar marque numeral\",es");
+		$resultado = $agi->get_data('beep', 30000, 10);
+		$docHuesped = $resultado['result'];
+
+		// Luego, le pregunto que tipo de piezas le interesa
+		$agi->exec("AGI","googletts.agi,\"Ahora ¿Que tipo de habitacion quiere?\",es");
+		$agi->exec("AGI","googletts.agi,\"Marque 1 para consultar las habitaciones simples\",es");
+		$agi->exec("AGI","googletts.agi,\"Marque 2 para consultar las habitaciones dobles\",es");
+		$agi->exec("AGI","googletts.agi,\"Marque 3 para consultar las habitaciones suite estandar\",es");
+		$agi->exec("AGI","googletts.agi,\"Marque 4 para consultar las habitaciones suite ejecutivas\",es");
+		$resultado = $agi->get_data('beep', 30000, 1);
+		$opcion = $resultado['result'];
+		switch($opcion)
+		{
+			case 1:
+			$tipoPieza = 'Simple';
+			break;
+			case 2:
+			$tipoPieza = 'Doble';
+			break;
+			case 3:
+			$tipoPieza = 'Suite Estandar';
+			break;
+			case 4:
+			$tipoPieza = 'Suite Ejecutiva';
+			break;
+		}
+
+		// Y busco de ese mismo tipo que esten disponibles
+		$instruccion = "SELECT id, etiqueta, detalles, costoDia FROM Habitacion WHERE tipoPieza='".$tipoPieza."';";
+		$resultado = mysqli_query($conexion, $instruccion);
+
+		// Se las digo una por una
+		$agi->exec("AGI","googletts.agi,\"Las habitaciones tipo ".$tipoPieza." disponibles son\",es");
+		while($fila = mysqli_fetch_array($resultado))
+		{
+			$agi->exec("AGI","googletts.agi,\"Habitacion ". $fila['id']. "\",es");
+
+			$etiqueta = str_replace(',', '', $fila['etiqueta']);
+			$detalles = str_replace(',', '', $fila['detalles']);
+
+			$agi->exec("AGI","googletts.agi,\"Referenciada como ". $etiqueta ."\",es");
+			$agi->exec("AGI","googletts.agi,\"De ". $detalles ."\",es");
+			$agi->exec("AGI","googletts.agi,\"Y cuyo costo por dia es ". $fila['costoDia'] ."\",es");
+		}
+
+		// Y le solicito que digite el id de la que le interesa
+		$agi->exec("AGI","googletts.agi,\"Digite el identificador de la habitacion elegida y al terminar marque numeral\",es");
+		$resultado = $agi->get_data('beep', 30000, 10);
+		$idHabitacion = $resultado['result'];
+
+
+		// Posteriormente, pregunto para cuando desea la reserva
+		$agi->exec("AGI","googletts.agi,\"Ahora ¿Para cuando quiere la reserva? \",es");
+		$agi->exec("AGI","googletts.agi,\"Digite el numero del dia y marque numeral al terminar\",es");
+		$resultado = $agi->get_data('beep', 30000, 2);
+		$agi->verbose("DIA:::: ". $resultado['result']); // Para depuracion de errores. No prestar atencion!
+		$dia = sprintf("%02d", $resultado['result']);
+		$agi->verbose("DIA:::: ". $dia); // Para depuracion de errores
+		$fecha = $dia . "-"; 
+		$agi->verbose("FECHA::: ". $fecha); // Para depuracion de errores
+		$agi->exec("AGI","googletts.agi,\"Digite el numero del mes y marque numeral al terminar\",es");
+		$resultado = $agi->get_data('beep', 30000, 2);
+		$agi->verbose("MES:::: ". $resultado['result']); // Para depuracion de errores
+		$mes = sprintf("%02d", $resultado['result']);
+		$agi->verbose("MES:::: ". $mes); // Para depuracion de errores
+		$fecha = $fecha . $mes;
+		$agi->verbose("FECHA::: ". $fecha); // Para depuracion de errores
+		$fecha = $fecha . "-";
+		$agi->verbose("FECHA::: ". $fecha); // Para depuracion de errores
+		$agi->exec("AGI","googletts.agi,\"Digite el año y marque numeral al terminar\",es");
+		$resultado = $agi->get_data('beep', 30000, 4);
+		$ano = $resultado['result'];
+		$fecha = $fecha . $ano;
+		$agi->verbose("FECHA::: ". $fecha); // Para depuracion de errores
+
+		// Y cuantos dias piensa hospedarse
+		$agi->exec("AGI","googletts.agi,\"Por favor ingrese el numero de dias ha quedarse y al terminar marque numeral\",es");
+		$resultado = $agi->get_data('beep', 30000, 10);
+		$numDias = $resultado['result'];
+
+		// Ya con todos los datos, armo la instruccion para generar la reserva
+		$instruccion = "INSERT INTO Reserva(docHuesped, habitacion, fechaEntrada, numDias) VALUES (".$docHuesped.",".$idHabitacion.",'".$fecha."',".$numDias.")";
+
+		// Y ejecuto la inserccion, de modo que
+		if(mysqli_query($conexion, $instruccion))
+		{
+			// Si todo es correcto emito un mensaje al respecto
+			$agi->exec("AGI","googletts.agi,\"Ha reservado con exito la habitacion ". $idHabitacion ."\",es");
+		}
+		else
+		{
+			// Si paso algo y no se pudo realizar la reserva, se emite tambien un mensaje para volver a empezar
+			$agi->exec("AGI","googletts.agi,\"Ha sucedido un error vuelva a intentarlo\",es");
+		}
+
+	}
+	elseif($opcionElegida == "3") // Si digito tres entonces
+	{
+		$agi->verbose("OPCION TRES");
+
+		// Solicitamos que ingrese su numero de identificacion y el id de la habitacion que reservo
+		$agi->exec("AGI","googletts.agi,\"Ingrese su numero de identificacion. Al terminar marque numeral\",es");
+		$resultado = $agi->get_data('beep', 30000, 10);
+		$docHuesped = $resultado['result'];
+		$agi->exec("AGI","googletts.agi,\"Ingrese el identificador de la habitacion. Al terminar marque numeral\",es");
+		$resultado = $agi->get_data('beep', 30000, 10);
+		$idHabitacion = $resultado['result'];
+
+		// Despues realizamos la eliminacion
+		if(mysqli_query($conexion, "DELETE FROM Reserva WHERE docHuesped=".$docHuesped." AND habitacion=".$idHabitacion.";"))
+		{
+			// Si todo salio bien, emitimos un mensaje de confirmacion
+			$agi->exec("AGI","googletts.agi,\"Su reserva ha sido cancelada\",es");
+		}
+		else
+		{
+			//En caso de error, se lo hacemos saber al usuario
+			$agi->exec("AGI","googletts.agi,\"Error durante el borrado\",es");
+		}
+	}
+	else // Sino digito una opcion valida entonces
+	{
+		$agi->verbose("OPCION NO VALIDA!");
+		$agi->exec("AGI","googletts.agi,\"Ha marcado una opción no valida. Fin de la llamada.\",es");
+	}
+	
+	// Terminado el programa cerramos la conexion a la base de datos
+	$agi->verbose("Cerrando conexion con la BD");
+	mysqli_close($conexion);
+	exit(0);
+?>
